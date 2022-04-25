@@ -7,7 +7,7 @@ This is a throw away C# console app (written in .NET Core 3.1) that I've recentl
 
 As this is only really a once run script, you'll have to excuse my simplistic approach. It will also log the items it didn't know how to handle properly.
 
-I've blogged about it in [this post](https://spyn.me/). (TBC)
+I've blogged about it in [this post](https://spyn.me/sitecore-migrating-from-tds-to-scs/).
 
 ## Usage
 1. Build the application, I won't be supplying binaries
