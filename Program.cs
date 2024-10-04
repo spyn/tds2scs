@@ -21,7 +21,7 @@ namespace tds2scs
 
             foreach (string arg in args)
             {
-                if(arg.EndsWith(".sln"))
+                if (arg.EndsWith(".sln"))
                 {
                     solutionFile = arg;
                 }
@@ -31,7 +31,7 @@ namespace tds2scs
             {
                 Console.WriteLine($"ERROR: No solution file was specified or configured.");
                 OutputHelp();
-                
+
                 Log.Error($"No solution file was specified.");
                 Environment.Exit(1);
             }
@@ -41,7 +41,7 @@ namespace tds2scs
 
             var rtn = ParseTdsProjects(solutionFile, pathRoot, helixModule);
 
-            if(rtn)
+            if (rtn)
             {
                 Console.WriteLine($"Modules created! Go check Visual Studio.");
             }
@@ -51,212 +51,216 @@ namespace tds2scs
         {
             foreach (string projLine in File.ReadLines(solutionFile))
             {
-                if (projLine.StartsWith("Project(\"{CAA73BB0-EF22-4D79-A57E-DF67B3BA9C80}\""))
+                if (!projLine.StartsWith("Project(\"{CAA73BB0-EF22-4D79-A57E-DF67B3BA9C80}\""))
                 {
-                    // It's a TDS project!
-                    var tdsProjFile = projLine.Replace("Project(\"{CAA73BB0-EF22-4D79-A57E-DF67B3BA9C80}\") = ", "");
-                    var tdsProjAr = tdsProjFile.Split(", ");
-                    var tdsFile = $"{pathRoot}\\" + tdsProjAr[1].Replace("\"", "");
+                    continue;
+                }
 
-                    if (File.Exists(tdsFile))
+                // It's a TDS project!
+                var tdsProjFile = projLine.Replace("Project(\"{CAA73BB0-EF22-4D79-A57E-DF67B3BA9C80}\") = ", "");
+                var tdsProjAr = tdsProjFile.Split(", ");
+                var tdsFile = $"{pathRoot}\\" + tdsProjAr[1].Replace("\"", "");
+
+                if (!File.Exists(tdsFile))
+                {
+                    continue;
+                }
+
+                var projectName = Path.GetFileName(tdsFile).Replace(".scproj", "");
+                var modulePath = Path.GetFullPath(Path.Combine(tdsFile, @"..\..\..\"));
+                DirectoryInfo moduleDir = new DirectoryInfo(tdsFile);
+
+                // This will be the filename of the generated module
+                var moduleFilename = modulePath + projectName + ".module.json";
+
+                Log.Info($"=[ Parsing: {projectName} => {tdsFile}");
+                Log.Info($"==[ Creating module file: {moduleFilename} ");
+
+                // Create a rule list and an include list
+                var rules = new List<ScsModuleModel.Rule>();
+                var includes = new List<ScsModuleModel.Include>();
+
+                // Parse TDS file
+                using (var fileStream = File.Open(tdsFile, FileMode.Open))
+                {
+                    // Open the TDS project file, and XML Deserialize
+                    var tdsProjectBase = Path.GetDirectoryName(tdsFile);
+                    XmlSerializer serializer = new XmlSerializer(typeof(TdsProjectModel.Project));
+                    var tdsProj = (TdsProjectModel.Project)serializer.Deserialize(fileStream);
+
+                    // Clean some things up on start of new project
+                    var lastSection = string.Empty;
+                    var firstPath = string.Empty;
+                    var lastRule = string.Empty;
+                    var filterItem = string.Empty;
+                    var includePath = string.Empty;
+                    var includeBasePath = string.Empty;
+
+                    var addRules = new List<ScsModuleModel.Rule>();
+                    var addIncludes = new List<ScsModuleModel.Include>();
+
+                    List<string> tdsItems = new List<string>();
+                    string tdsDatabase = "master";
+
+                    // Now to parse the list of TDS items in the TDS Project and load in the file
+                    foreach (var item in tdsProj.ItemGroup)
                     {
-                        var projectName = Path.GetFileName(tdsFile).Replace(".scproj", "");
-                        var modulePath = Path.GetFullPath(Path.Combine(tdsFile, @"..\..\..\"));
-                        DirectoryInfo moduleDir = new DirectoryInfo(tdsFile);
+                        var itemFile = tdsProjectBase + "\\" + item.Include.ToString();
 
-                        // This will be the filename of the generated module
-                        var moduleFilename = modulePath + projectName + ".module.json";
-
-                        Log.Info($"=[ Parsing: {projectName} => {tdsFile}");
-                        Log.Info($"==[ Creating module file: {moduleFilename} ");
-
-                        // Create a rule list and an include list
-                        var rules = new List<ScsModuleModel.Rule>();
-                        var includes = new List<ScsModuleModel.Include>();
-
-
-                        // Parse TDS file
-                        using (var fileStream = File.Open(tdsFile, FileMode.Open))
+                        // it doesn't handle $(?) proper
+                        if (itemFile.Contains("%2524"))
                         {
+                            itemFile = itemFile.Replace("%2524", "%24");
+                        }
 
-                            // Open the TDS project file, and XML Deserialize
-                            var tdsProjectBase = Path.GetDirectoryName(tdsFile);
-                            XmlSerializer serializer = new XmlSerializer(typeof(TdsProjectModel.Project));
-                            var tdsProj = (TdsProjectModel.Project)serializer.Deserialize(fileStream);
-
-                            // Clean some things up on start of new project
-                            var lastSection = string.Empty;
-                            var firstPath = string.Empty;
-                            var lastRule = string.Empty;
-                            var filterItem = string.Empty;
-                            var includePath = string.Empty;
-                            var includeBasePath = string.Empty;
-
-                            var addRules = new List<ScsModuleModel.Rule>();
-                            var addIncludes = new List<ScsModuleModel.Include>();
-
-                            List<string> tdsItems = new List<string>();
-                            string tdsDatabase = "master";
-
-                            // Now to parse the list of TDS items in the TDS Project and load in the file
-                            foreach (var item in tdsProj.ItemGroup)
+                        foreach (string line in File.ReadLines(itemFile))
+                        {
+                            if (line.StartsWith("database:"))
                             {
-                                var itemFile = tdsProjectBase + "\\" + item.Include.ToString();
+                                var scDatabase = line[10..];
+                                if (!string.IsNullOrEmpty(scDatabase))
+                                    tdsDatabase = scDatabase;
+                            }
+                            if (line.StartsWith("path:"))
+                            {
+                                var scPath = line[6..];
+                                if (!string.IsNullOrEmpty(scPath))
+                                    tdsItems.Add(scPath);
+                            }
+                        }
+                    }
 
-                                // it doesn't handle $(?) proper
-                                if (itemFile.Contains("%2524"))
-                                {
-                                    itemFile = itemFile.Replace("%2524", "%24");
-                                }
+                    var firstRuleAdded = false;
 
-                                foreach (string line in File.ReadLines(itemFile))
+                    //now create the module
+
+                    foreach (var scPath in tdsItems)
+                    {
+                        if (scPath.Contains($"Feature/{helixModule}", StringComparison.InvariantCultureIgnoreCase)
+                            || scPath.Contains($"Foundation/{helixModule}", StringComparison.InvariantCultureIgnoreCase)
+                            || scPath.Contains($"Project/{helixModule}", StringComparison.InvariantCultureIgnoreCase)
+                            || scPath.Contains($"Content/{helixModule}", StringComparison.InvariantCultureIgnoreCase)
+                            || scPath.Contains($"client/Your Apps", StringComparison.InvariantCultureIgnoreCase))
+                        {
+                            var newSection = false;
+                            var scSection = GetSitecoreSection(scPath);
+
+                            if (string.IsNullOrEmpty(lastSection))
+                                lastSection = scSection;
+
+                            if (scSection != lastSection)
+                                newSection = true;
+
+                            if (string.IsNullOrEmpty(includePath))
+                                includeBasePath = includePath;
+
+                            if (!scPath.Contains(firstPath) && firstRuleAdded)
+                                firstRuleAdded = false;
+
+                            // This handles most the helix type modules
+                            if ((scPath.Contains($"Feature/{helixModule}/", StringComparison.InvariantCultureIgnoreCase)
+                                || scPath.Contains($"Foundation/{helixModule}/", StringComparison.InvariantCultureIgnoreCase)
+                                || scPath.Contains($"Project/{helixModule}/", StringComparison.InvariantCultureIgnoreCase)
+                                || scPath.Contains($"Content/{helixModule}/", StringComparison.InvariantCultureIgnoreCase)
+                                || scPath.Contains($"client/Your Apps/", StringComparison.InvariantCultureIgnoreCase))
+                                && !firstRuleAdded)
+                            {
+                                // first added
+                                firstPath = scPath;
+                                includePath = scPath.Substring(0, firstPath.LastIndexOf('/'));
+                                filterItem = scPath.Substring(firstPath.LastIndexOf('/'));
+
+                                // create include here
+                                Log.Info($"===[Rule]: {filterItem} / {scPath}");
+                                var rule = new ScsModuleModel.Rule()
                                 {
-                                    if (line.StartsWith("database:"))
-                                    {
-                                        var scDatabase = line[10..];
-                                        if (!string.IsNullOrEmpty(scDatabase))
-                                            tdsDatabase = scDatabase;
-                                    }
-                                    if (line.StartsWith("path:"))
-                                    {
-                                        var scPath = line[6..];
-                                        if (!string.IsNullOrEmpty(scPath))
-                                            tdsItems.Add(scPath);
-                                    }
-                                }
+                                    Path = filterItem,
+                                    AllowedPushOperations = "createAndUpdate",
+                                    Scope = "itemAndDescendants"
+                                };
+                                addRules.Add(rule);
+                                firstRuleAdded = true;
                             }
 
-                            var firstRuleAdded = false;
-
-                            //now create the module
-
-                            foreach (var scPath in tdsItems)
+                            // Create the include
+                            if (newSection)
                             {
-                                if (scPath.Contains($"Feature/{helixModule}", StringComparison.InvariantCultureIgnoreCase)
-                                    || scPath.Contains($"Foundation/{helixModule}", StringComparison.InvariantCultureIgnoreCase)
-                                    || scPath.Contains($"Project/{helixModule}", StringComparison.InvariantCultureIgnoreCase)
-                                    || scPath.Contains($"Content/{helixModule}", StringComparison.InvariantCultureIgnoreCase)
-                                    || scPath.Contains($"client/Your Apps", StringComparison.InvariantCultureIgnoreCase))
+                                if (!string.IsNullOrEmpty(includePath))
                                 {
-                                    var newSection = false;
-                                    var scSection = GetSitecoreSection(scPath);
-
-                                    if (string.IsNullOrEmpty(lastSection))
-                                        lastSection = scSection;
-
-                                    if (scSection != lastSection)
-                                        newSection = true;
-
-                                    if(string.IsNullOrEmpty(includePath))
-                                        includeBasePath = includePath;
-                                    
-                                    if (!scPath.Contains(firstPath) && firstRuleAdded)
-                                        firstRuleAdded = false;
-
-                                    // This handles most the helix type modules
-                                    if ((scPath.Contains($"Feature/{helixModule}/", StringComparison.InvariantCultureIgnoreCase) 
-                                        || scPath.Contains($"Foundation/{helixModule}/", StringComparison.InvariantCultureIgnoreCase)
-                                        || scPath.Contains($"Project/{helixModule}/", StringComparison.InvariantCultureIgnoreCase)
-                                        || scPath.Contains($"Content/{helixModule}/", StringComparison.InvariantCultureIgnoreCase)
-                                        || scPath.Contains($"client/Your Apps/", StringComparison.InvariantCultureIgnoreCase))
-                                        && !firstRuleAdded)
+                                    Log.Info($"==[Include]: {scSection} / {includePath}");
+                                    var finalRule = new ScsModuleModel.Rule()
                                     {
-                                        // first added
-                                        firstPath = scPath;
-                                        includePath = scPath.Substring(0, firstPath.LastIndexOf('/'));
-                                        filterItem = scPath.Substring(firstPath.LastIndexOf('/'));
+                                        Path = "*",
+                                        Scope = "ignored",
+                                    };
+                                    addRules.Add(finalRule);
 
-                                        // create include here
-                                        Log.Info($"===[Rule]: {filterItem} / {scPath}");
-                                        var rule = new ScsModuleModel.Rule()
-                                        {
-                                            Path = filterItem,
-                                            AllowedPushOperations = "createAndUpdate",
-                                            Scope = "itemAndDescendants"
-                                        };
-                                        addRules.Add(rule);
-                                        firstRuleAdded = true;
+                                    var include = new ScsModuleModel.Include()
+                                    {
+                                        AllowedPushOperations = "createAndUpdate",
+                                        Name = lastSection,
+                                        Path = includePath,
+                                        Scope = "itemAndDescendants",
+                                        Database = tdsDatabase,
+                                        Rules = new List<ScsModuleModel.Rule>(addRules),
+                                    };
+
+                                    if (!string.IsNullOrEmpty(Config["maxRelativePathLength"]))
+                                    {
+                                        include.MaxRelativePathLength = Config["maxRelativePathLength"];
                                     }
 
-                                    // Create the include
-                                    if (newSection)
-                                    {
-                                        if(!string.IsNullOrEmpty(includePath))
-                                        {
-                                            Log.Info($"==[Include]: {scSection} / {includePath}");
-                                            var finalRule = new ScsModuleModel.Rule()
-                                            {
-                                                Path = "*",
-                                                Scope = "ignored",
-                                            };
-                                            addRules.Add(finalRule);
+                                    addIncludes.Add(include);
 
-                                            var include = new ScsModuleModel.Include()
-                                            {
-                                                AllowedPushOperations = "createAndUpdate",
-                                                Name = lastSection,
-                                                Path = includePath,
-                                                Scope = "itemAndDescendants",
-                                                Database = tdsDatabase,
-                                                Rules = new List<ScsModuleModel.Rule>(addRules),
-                                            };
-
-                                            if(!string.IsNullOrEmpty(Config["maxRelativePathLength"])) {
-                                                include.MaxRelativePathLength = Config["maxRelativePathLength"];
-                                            }
-
-                                            addIncludes.Add(include);
-
-                                            // reset
-                                            addRules.Clear();
-                                            firstPath = string.Empty;
-                                            includePath = string.Empty;
-                                            filterItem = string.Empty;
-                                            lastSection = scSection;
-                                        } else
-                                        {
-                                            Log.Warn($"==[Include]: Missing: {scSection} / {scPath}");
-                                        }
-
-                                    }
-
-                                }
-                                // If it's a system folder
-                                else if (scPath.StartsWith($"/sitecore/system/", StringComparison.InvariantCultureIgnoreCase))
-                                {
-                                    // We need to be careful with these ones
-                                    // TODO: Maybe support this, idk
+                                    // reset
+                                    addRules.Clear();
+                                    firstPath = string.Empty;
+                                    includePath = string.Empty;
+                                    filterItem = string.Empty;
+                                    lastSection = scSection;
                                 }
                                 else
                                 {
-                                    Log.Warn($"Unable to find a place for {scPath}");
+                                    Log.Warn($"==[Include]: Missing: {scSection} / {scPath}");
                                 }
+
                             }
 
-                            var items = new ScsModuleModel.Items()
-                            {
-                                Includes = addIncludes
-                            };
-
-                            if(!string.IsNullOrEmpty(Config["serialisationFolder"]))
-                            {
-                                items.Path = Config["serialisationFolder"];
-                            }
-
-                            var scsModule = new ScsModuleModel.Root()
-                            {
-                                Namespace = projectName,
-                                Description = projectName,
-                                Items = items,
-                            };
-
-                            // Create that module file yo
-                            string json = JsonConvert.SerializeObject(scsModule, Newtonsoft.Json.Formatting.Indented);
-                            File.WriteAllText(moduleFilename, json);
-
-                            Log.Info($"Module written for {moduleFilename}");
+                        }
+                        // If it's a system folder
+                        else if (scPath.StartsWith($"/sitecore/system/", StringComparison.InvariantCultureIgnoreCase))
+                        {
+                            // We need to be careful with these ones
+                            // TODO: Maybe support this, idk
+                        }
+                        else
+                        {
+                            Log.Warn($"Unable to find a place for {scPath}");
                         }
                     }
+
+                    var items = new ScsModuleModel.Items()
+                    {
+                        Includes = addIncludes
+                    };
+
+                    if (!string.IsNullOrEmpty(Config["serialisationFolder"]))
+                    {
+                        items.Path = Config["serialisationFolder"];
+                    }
+
+                    var scsModule = new ScsModuleModel.Root()
+                    {
+                        Namespace = projectName,
+                        Description = projectName,
+                        Items = items,
+                    };
+
+                    // Create that module file yo
+                    string json = JsonConvert.SerializeObject(scsModule, Newtonsoft.Json.Formatting.Indented);
+                    File.WriteAllText(moduleFilename, json);
+
+                    Log.Info($"Module written for {moduleFilename}");
                 }
             }
 
@@ -284,12 +288,12 @@ namespace tds2scs
         {
             // if it's one of the ones below, then do it
 
-            if(path.StartsWith("/sitecore/Layout/Layouts", StringComparison.InvariantCultureIgnoreCase))
+            if (path.StartsWith("/sitecore/Layout/Layouts", StringComparison.InvariantCultureIgnoreCase))
             {
                 return "Layouts";
             }
 
-            if(path.StartsWith("/sitecore/Layout/Renderings", StringComparison.InvariantCultureIgnoreCase))
+            if (path.StartsWith("/sitecore/Layout/Renderings", StringComparison.InvariantCultureIgnoreCase))
             {
                 return "Renderings";
             }
@@ -309,13 +313,12 @@ namespace tds2scs
                 return "System";
             }
 
-            if(path.StartsWith("/sitecore/client/Your Apps", StringComparison.InvariantCultureIgnoreCase))
+            if (path.StartsWith("/sitecore/client/Your Apps", StringComparison.InvariantCultureIgnoreCase))
             {
                 return "Your Apps";
             }
 
             return path.Split('/')[2];
-
         }
 
         #region Configuration 
@@ -349,5 +352,3 @@ namespace tds2scs
         #endregion
     }
 }
-
-
