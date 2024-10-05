@@ -3,7 +3,7 @@ Convert all your Sitecore TDS projects in your solution to SCS module files
 
 ## What is tds2scs?
 
-This is a throw away C# console app (written in .NET Core 3.1) that I've recently written to take the burnden off filtering through massive amounts of TDS projects that may exist in your Sitecore solution. It doesn't do everything, but it will generate a base .module.json file for you to modify to your needs. It's best suited to helix designed systems where items are seralised in TDS as example, Feature/{Module}. If it doesn't match your setup, feel free to modify it to your needs!
+This is a throwaway C# console app (written in .NET Core 3.1) that I've recently written to take the burden off filtering through massive amounts of TDS projects that may exist in your Sitecore solution. It doesn't do everything, but it will generate a base .module.json file for you to modify to your needs. It's best suited to helix designed systems where items are seralised in TDS, for example, Feature/{Module}. If it doesn't match your setup, feel free to modify it to your needs!
 
 As this is only really a once run script, you'll have to excuse my simplistic approach. It will also log the items it didn't know how to handle properly.
 
